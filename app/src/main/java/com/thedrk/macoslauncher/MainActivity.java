@@ -363,18 +363,16 @@ public class MainActivity extends Activity {
                             + dp(56)), 0);
                 }
 
-                scroll.postDelayed(() -> {
-
+                scroll.post(() -> {
                     float x = tile.getLeft() - scroll.getScrollX();
-
+                    indicator.animate().cancel();
                     indicator.animate()
                         .translationX(x)
                         .alpha(1f)
-                        .setDuration(230)
-                        .setInterpolator(new DecelerateInterpolator())
+                        .setDuration(320)
+                        .setInterpolator(new DecelerateInterpolator(1.5f))
                         .start();
-
-                }, 90);
+                });
             });
         }
     }
@@ -624,29 +622,17 @@ public class MainActivity extends Activity {
     // ---------------- SYSTEM SHORTCUTS ----------------
 
     private void openAction(String action, boolean fallback) {
-
         try {
             Intent i = new Intent(action);
-
             if (i.resolveActivity(getPackageManager()) != null) {
                 startActivity(i);
                 return;
             }
-
         } catch (Exception ignored) {}
-
-        if (fallback) {
-            try {
-                startActivity(new Intent(Settings.ACTION_SETTINGS));
-                return;
-            } catch (Exception ignored) {}
-        }
-
         Toast.makeText(this,
-            "This function is not exposed by your TV firmware. Use the TV remote's Source button if available.",
+            "This function is not exposed by your TV firmware.",
             Toast.LENGTH_LONG).show();
     }
-
     private void openFiles() {
 
         try {
@@ -739,6 +725,7 @@ public class MainActivity extends Activity {
 
         Wallpaper(Context context) {
             super(context);
+            setLayerType(View.LAYER_TYPE_HARDWARE, null);
         }
 
         void setPosition(int index) {
@@ -748,7 +735,7 @@ public class MainActivity extends Activity {
             if (animation != null) animation.cancel();
 
             animation = ValueAnimator.ofFloat(position, target);
-            animation.setDuration(420);
+            animation.setDuration(750);
             animation.setInterpolator(new DecelerateInterpolator());
 
             animation.addUpdateListener(a -> {
