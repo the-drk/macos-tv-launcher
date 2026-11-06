@@ -6,41 +6,39 @@ import android.os.Handler;
 import android.content.Intent;
 import android.content.pm.PackageManager;
 import android.content.pm.ResolveInfo;
-import android.graphics.Color;
-import android.graphics.Typeface;
+import android.graphics.*;
 import android.graphics.drawable.GradientDrawable;
-import android.view.Gravity;
-import android.view.View;
-import android.view.KeyEvent;
+import android.net.wifi.WifiManager;
+import android.bluetooth.BluetoothAdapter;
+import android.provider.Settings;
+import android.view.*;
 import android.view.animation.DecelerateInterpolator;
-import android.widget.FrameLayout;
-import android.widget.LinearLayout;
-import android.widget.HorizontalScrollView;
-import android.widget.ImageView;
-import android.widget.TextView;
+import android.widget.*;
+import android.content.Context;
+
 import java.text.SimpleDateFormat;
-import java.util.ArrayList;
-import java.util.Date;
-import java.util.Locale;
+import java.util.*;
 
 public class MainActivity extends Activity {
 
+    private FrameLayout root;
     private LinearLayout dock;
     private HorizontalScrollView scroll;
-    private TextView clock;
+    private LinearLayout controlPanel;
+    private TextView clock, wifiStatus, bluetoothStatus;
+    private WallpaperView wallpaper;
+    private boolean panelOpen = false;
     private final Handler handler = new Handler();
 
-    private int dp(float value) {
-        return (int) (value * getResources().getDisplayMetrics().density);
+    private int dp(float v) {
+        return (int)(v * getResources().getDisplayMetrics().density);
     }
 
-    private GradientDrawable rounded(int color, int stroke) {
+    private GradientDrawable glass(int color, int stroke, int radius) {
         GradientDrawable d = new GradientDrawable();
         d.setColor(color);
-        d.setCornerRadius(dp(22));
-        if (stroke != 0) {
-            d.setStroke(dp(1), stroke);
-        }
+        d.setCornerRadius(dp(radius));
+        if (stroke != 0) d.setStroke(dp(1), stroke);
         return d;
     }
 
@@ -55,112 +53,153 @@ public class MainActivity extends Activity {
             View.SYSTEM_UI_FLAG_LAYOUT_STABLE
         );
 
-        FrameLayout root = new FrameLayout(this);
-        root.setBackgroundColor(Color.rgb(12, 14, 22));
+        root = new FrameLayout(this);
 
-        LinearLayout main = new LinearLayout(this);
-        main.setOrientation(LinearLayout.VERTICAL);
-        main.setPadding(dp(48), dp(25), dp(48), dp(25));
+        wallpaper = new WallpaperView(this);
+        root.addView(wallpaper,
+            new FrameLayout.LayoutParams(-1, -1));
 
-        FrameLayout.LayoutParams mainParams =
-            new FrameLayout.LayoutParams(-1, -1);
+        buildDesktop();
+        setContentView(root);
+        loadApps();
+        updateStatus();
+        updateClock();
+    }
 
-        root.addView(main, mainParams);
+    private TextView text(String value, int size, int color) {
+        TextView t = new TextView(this);
+        t.setText(value);
+        t.setTextSize(size);
+        t.setTextColor(color);
+        t.setGravity(Gravity.CENTER_VERTICAL);
+        t.setFontFeatureSettings("kern");
+        return t;
+    }
 
-        // TOP BAR
+    private void buildDesktop() {
+
+        LinearLayout desktop = new LinearLayout(this);
+        desktop.setOrientation(LinearLayout.VERTICAL);
+        desktop.setPadding(dp(52), dp(23), dp(52), dp(20));
+
+        root.addView(desktop, new FrameLayout.LayoutParams(-1, -1));
+
+        // TOP MENU BAR
 
         LinearLayout top = new LinearLayout(this);
         top.setGravity(Gravity.CENTER_VERTICAL);
-        top.setOrientation(LinearLayout.HORIZONTAL);
 
-        TextView brand = new TextView(this);
-        brand.setText("macOS");
-        brand.setTextColor(Color.WHITE);
-        brand.setTextSize(23);
+        TextView logo = text("●", 19, Color.WHITE);
+        TextView brand = text("  macOS", 17, Color.WHITE);
         brand.setTypeface(Typeface.create("sans-serif-medium", 0));
 
-        TextView subtitle = new TextView(this);
-        subtitle.setText("   TV EXPERIENCE");
-        subtitle.setTextColor(Color.rgb(135, 145, 165));
-        subtitle.setTextSize(10);
-
-        clock = new TextView(this);
-        clock.setTextColor(Color.WHITE);
-        clock.setTextSize(16);
-        clock.setGravity(Gravity.RIGHT);
-
+        top.addView(logo);
         top.addView(brand);
-        top.addView(subtitle);
 
-        View spacer = new View(this);
-        top.addView(spacer, new LinearLayout.LayoutParams(0, 1, 1));
+        TextView desktopLabel = text("     DESKTOP", 10,
+            Color.rgb(145, 157, 184));
+        top.addView(desktopLabel);
 
-        top.addView(clock);
-        main.addView(top);
+        View gap = new View(this);
+        top.addView(gap, new LinearLayout.LayoutParams(0, 1, 1));
 
-        updateClock();
+        wifiStatus = text("Wi-Fi", 11, Color.WHITE);
+        bluetoothStatus = text("  Bluetooth", 11, Color.WHITE);
 
-        // MAIN TITLE
+        top.addView(wifiStatus);
+        top.addView(bluetoothStatus);
 
-        TextView title = new TextView(this);
-        title.setText("Good to see you.");
-        title.setTextColor(Color.WHITE);
-        title.setTextSize(29);
-        title.setTypeface(Typeface.create("sans-serif-medium", 0));
-        title.setPadding(0, dp(65), 0, dp(7));
-        main.addView(title);
+        TextView control = text("  ◉  Control Centre  ", 12,
+            Color.WHITE);
+        control.setFocusable(true);
+        control.setPadding(dp(10), dp(8), dp(10), dp(8));
+        control.setBackground(glass(0x442C3548, 0x557F8BA5, 20));
+        control.setOnClickListener(v -> togglePanel());
+        addFocus(control);
 
-        TextView description = new TextView(this);
-        description.setText("Choose something to watch");
-        description.setTextColor(Color.rgb(150, 155, 172));
-        description.setTextSize(14);
-        main.addView(description);
+        LinearLayout.LayoutParams cp =
+            new LinearLayout.LayoutParams(-2, dp(38));
+        cp.leftMargin = dp(16);
+        top.addView(control, cp);
 
-        // APPLICATION DOCK
+        desktop.addView(top);
+
+        // MAIN DESKTOP CONTENT
+
+        View space = new View(this);
+        desktop.addView(space,
+            new LinearLayout.LayoutParams(1, 0, 1));
+
+        TextView greeting = text("Your space.", 34, Color.WHITE);
+        greeting.setTypeface(
+            Typeface.create("sans-serif-light", 0));
+        desktop.addView(greeting);
+
+        TextView subtitle = text(
+            "Everything you need, in one place.",
+            14, 0xFFB2BBD0);
+        LinearLayout.LayoutParams subParams =
+            new LinearLayout.LayoutParams(-2, -2);
+        subParams.topMargin = dp(8);
+        desktop.addView(subtitle, subParams);
+
+        // APP DOCK
 
         scroll = new HorizontalScrollView(this);
         scroll.setHorizontalScrollBarEnabled(false);
         scroll.setClipToPadding(false);
-        scroll.setPadding(dp(5), dp(18), dp(5), dp(18));
+        scroll.setPadding(dp(2), dp(20), dp(2), dp(20));
 
         dock = new LinearLayout(this);
         dock.setOrientation(LinearLayout.HORIZONTAL);
         dock.setGravity(Gravity.CENTER_VERTICAL);
-
         scroll.addView(dock);
 
         LinearLayout.LayoutParams dockParams =
-            new LinearLayout.LayoutParams(-1, dp(180));
+            new LinearLayout.LayoutParams(-1, dp(150));
+        dockParams.topMargin = dp(20);
+        desktop.addView(scroll, dockParams);
 
-        dockParams.topMargin = dp(35);
-        main.addView(scroll, dockParams);
+        // BOTTOM BAR
 
-        TextView footer = new TextView(this);
-        footer.setText("SELECT  OPEN APP       •       BACK  HOME");
-        footer.setTextColor(Color.rgb(105, 112, 130));
-        footer.setTextSize(11);
-        footer.setPadding(0, dp(22), 0, 0);
-        main.addView(footer);
+        LinearLayout bottom = new LinearLayout(this);
+        bottom.setGravity(Gravity.CENTER_VERTICAL);
 
-        setContentView(root);
+        TextView hint = text(
+            "←  →  NAVIGATE       OK  OPEN       MENU  CONTROL CENTRE",
+            10, 0xFF8D9AB2);
+        bottom.addView(hint);
 
-        loadApps();
+        View bottomGap = new View(this);
+        bottom.addView(bottomGap,
+            new LinearLayout.LayoutParams(0, 1, 1));
+
+        clock = text("", 14, Color.WHITE);
+        bottom.addView(clock);
+
+        LinearLayout.LayoutParams bottomParams =
+            new LinearLayout.LayoutParams(-1, dp(35));
+        bottomParams.topMargin = dp(10);
+        desktop.addView(bottom, bottomParams);
+
+        View endSpace = new View(this);
+        desktop.addView(endSpace,
+            new LinearLayout.LayoutParams(1, 0, 0.6f));
     }
 
-    private void updateClock() {
-        if (clock != null) {
-            String time = new SimpleDateFormat(
-                "hh:mm a    EEE, dd MMM",
-                Locale.getDefault()
-            ).format(new Date());
-
-            clock.setText(time);
-        }
-
-        handler.postDelayed(this::updateClock, 60000);
+    private void addFocus(View v) {
+        v.setOnFocusChangeListener((view, focused) -> {
+            view.animate()
+                .scaleX(focused ? 1.08f : 1f)
+                .scaleY(focused ? 1.08f : 1f)
+                .setDuration(160)
+                .setInterpolator(new DecelerateInterpolator())
+                .start();
+        });
     }
 
     private void loadApps() {
+
         dock.removeAllViews();
 
         PackageManager pm = getPackageManager();
@@ -172,33 +211,29 @@ public class MainActivity extends Activity {
         normal.addCategory(Intent.CATEGORY_LAUNCHER);
 
         ArrayList<ResolveInfo> apps = new ArrayList<>();
-        ArrayList<String> packages = new ArrayList<>();
+        HashSet<String> seen = new HashSet<>();
 
-        for (ResolveInfo info : pm.queryIntentActivities(leanback, 0)) {
-            String pkg = info.activityInfo.packageName;
-            if (!packages.contains(pkg)) {
-                packages.add(pkg);
+        for (ResolveInfo info :
+            pm.queryIntentActivities(leanback, 0)) {
+            if (seen.add(info.activityInfo.packageName)) {
                 apps.add(info);
             }
         }
 
-        for (ResolveInfo info : pm.queryIntentActivities(normal, 0)) {
+        for (ResolveInfo info :
+            pm.queryIntentActivities(normal, 0)) {
             String pkg = info.activityInfo.packageName;
-            if (!packages.contains(pkg) &&
-                !pkg.equals(getPackageName())) {
-                packages.add(pkg);
+            if (!pkg.equals(getPackageName()) && seen.add(pkg)) {
                 apps.add(info);
             }
         }
 
         apps.sort((a, b) ->
             a.loadLabel(pm).toString().compareToIgnoreCase(
-                b.loadLabel(pm).toString()
-            )
-        );
+                b.loadLabel(pm).toString()));
 
         for (ResolveInfo info : apps) {
-            addAppTile(info, pm);
+            addApp(info, pm);
         }
 
         if (dock.getChildCount() > 0) {
@@ -206,129 +241,409 @@ public class MainActivity extends Activity {
         }
     }
 
-    private void addAppTile(ResolveInfo info, PackageManager pm) {
+    private void addApp(ResolveInfo info, PackageManager pm) {
 
-        LinearLayout tile = new LinearLayout(this);
-        tile.setOrientation(LinearLayout.VERTICAL);
-        tile.setGravity(Gravity.CENTER);
-        tile.setFocusable(true);
-        tile.setFocusableInTouchMode(true);
-        tile.setBackground(rounded(
-            Color.rgb(29, 33, 46),
-            Color.rgb(48, 53, 70)
-        ));
+        LinearLayout item = new LinearLayout(this);
+        item.setOrientation(LinearLayout.VERTICAL);
+        item.setGravity(Gravity.CENTER);
+        item.setFocusable(true);
+        item.setFocusableInTouchMode(true);
+        item.setBackgroundColor(Color.TRANSPARENT);
 
         ImageView icon = new ImageView(this);
+        icon.setScaleType(ImageView.ScaleType.FIT_CENTER);
 
         try {
             icon.setImageDrawable(info.loadIcon(pm));
         } catch (Exception ignored) {}
 
-        icon.setScaleType(ImageView.ScaleType.FIT_CENTER);
+        item.addView(icon,
+            new LinearLayout.LayoutParams(dp(76), dp(76)));
 
-        LinearLayout.LayoutParams iconParams =
-            new LinearLayout.LayoutParams(dp(54), dp(54));
+        TextView name = text(
+            info.loadLabel(pm).toString(), 12, Color.WHITE);
+        name.setGravity(Gravity.CENTER);
+        name.setSingleLine(true);
+        name.setMaxEms(12);
+        name.setEllipsize(android.text.TextUtils.TruncateAt.END);
 
-        tile.addView(icon, iconParams);
-
-        TextView label = new TextView(this);
-        label.setText(info.loadLabel(pm).toString());
-        label.setTextColor(Color.WHITE);
-        label.setTextSize(12);
-        label.setGravity(Gravity.CENTER);
-        label.setMaxLines(1);
-        label.setSingleLine(true);
-
-        LinearLayout.LayoutParams labelParams =
-            new LinearLayout.LayoutParams(
-                dp(110), -2
-            );
-
-        labelParams.topMargin = dp(13);
-        tile.addView(label, labelParams);
+        LinearLayout.LayoutParams nameParams =
+            new LinearLayout.LayoutParams(dp(112), dp(25));
+        nameParams.topMargin = dp(8);
+        item.addView(name, nameParams);
 
         LinearLayout.LayoutParams params =
-            new LinearLayout.LayoutParams(dp(145), dp(145));
+            new LinearLayout.LayoutParams(dp(125), dp(125));
+        params.setMargins(dp(3), 0, dp(3), 0);
+        dock.addView(item, params);
 
-        params.setMargins(dp(8), 0, dp(8), 0);
-        dock.addView(tile, params);
-
-        tile.setOnFocusChangeListener((v, focused) -> {
-
-            float scale = focused ? 1.09f : 1.0f;
+        item.setOnFocusChangeListener((v, focused) -> {
+            float scale = focused ? 1.16f : 1f;
 
             v.animate()
                 .scaleX(scale)
                 .scaleY(scale)
-                .setDuration(160)
+                .setDuration(190)
                 .setInterpolator(new DecelerateInterpolator())
                 .start();
 
-            v.setBackground(rounded(
-                focused
-                    ? Color.rgb(53, 61, 83)
-                    : Color.rgb(29, 33, 46),
-                focused
-                    ? Color.rgb(130, 150, 190)
-                    : Color.rgb(48, 53, 70)
-            ));
+            name.setTextColor(focused ?
+                Color.WHITE : 0xFFB0BBD0);
 
             if (focused) {
-                scroll.post(() -> {
-                    int target = Math.max(
-                        0,
-                        v.getLeft() - dp(30)
-                    );
-                    scroll.smoothScrollTo(target, 0);
-                });
+                int index = dock.indexOfChild(v);
+                wallpaper.setPosition(index);
+                scroll.post(() ->
+                    scroll.smoothScrollTo(
+                        Math.max(0, v.getLeft() - dp(90)), 0));
             }
         });
 
-        tile.setOnClickListener(v -> {
+        item.setOnClickListener(v -> {
             try {
                 Intent launch = pm.getLaunchIntentForPackage(
-                    info.activityInfo.packageName
-                );
+                    info.activityInfo.packageName);
 
-                if (launch == null) {
-                    launch = new Intent(Intent.ACTION_MAIN);
-                    launch.addCategory(Intent.CATEGORY_LEANBACK_LAUNCHER);
-                    launch.setPackage(info.activityInfo.packageName);
-                }
-
-                if (launch.resolveActivity(pm) != null) {
+                if (launch != null) {
                     startActivity(launch);
                 }
             } catch (Exception e) {
-                android.widget.Toast.makeText(
-                    this,
-                    "Unable to open application",
-                    android.widget.Toast.LENGTH_SHORT
-                ).show();
+                Toast.makeText(this, "Unable to open app",
+                    Toast.LENGTH_SHORT).show();
             }
         });
+    }
+
+    // CONTROL CENTRE
+
+    private void togglePanel() {
+        if (panelOpen) {
+            closePanel();
+        } else {
+            openPanel();
+        }
+    }
+
+    private void openPanel() {
+
+        if (panelOpen) return;
+        panelOpen = true;
+
+        controlPanel = new LinearLayout(this);
+        controlPanel.setOrientation(LinearLayout.VERTICAL);
+        controlPanel.setPadding(dp(24), dp(22), dp(24), dp(22));
+        controlPanel.setBackground(
+            glass(0xF21B2232, 0x667E8DAA, 25));
+        controlPanel.setFocusable(true);
+
+        FrameLayout.LayoutParams panelParams =
+            new FrameLayout.LayoutParams(dp(330), -1,
+                Gravity.RIGHT | Gravity.CENTER_VERTICAL);
+        panelParams.setMargins(0, dp(12), dp(12), dp(12));
+
+        root.addView(controlPanel, panelParams);
+
+        TextView heading = text("Control Centre", 23, Color.WHITE);
+        heading.setTypeface(
+            Typeface.create("sans-serif-medium", 0));
+        controlPanel.addView(heading);
+
+        TextView info = text("SYSTEM SHORTCUTS", 10, 0xFF91A0BD);
+        LinearLayout.LayoutParams infoParams =
+            new LinearLayout.LayoutParams(-1, dp(35));
+        infoParams.topMargin = dp(15);
+        controlPanel.addView(info, infoParams);
+
+        addControl("⌁", "Wi-Fi", "Network settings",
+            Settings.ACTION_WIFI_SETTINGS);
+
+        addControl("ᛒ", "Bluetooth", "Bluetooth settings",
+            Settings.ACTION_BLUETOOTH_SETTINGS);
+
+        addControl("⚙", "System Settings", "Android TV settings",
+            Settings.ACTION_SETTINGS);
+
+        addControl("▣", "Display", "Display settings",
+            Settings.ACTION_DISPLAY_SETTINGS);
+
+        addControl("♫", "Sound", "Sound settings",
+            Settings.ACTION_SOUND_SETTINGS);
+
+        addControl("▤", "HDMI / Inputs", "TV input selection",
+            "android.settings.HDMI_SETTINGS");
+
+        addFileControl();
+
+        TextView close = text("Close  ✕", 13, Color.WHITE);
+        close.setGravity(Gravity.CENTER);
+        close.setFocusable(true);
+        close.setPadding(0, dp(12), 0, dp(12));
+        close.setBackground(glass(0x442F3D55,
+            0x557F8BA5, 16));
+        close.setOnClickListener(v -> closePanel());
+
+        LinearLayout.LayoutParams closeParams =
+            new LinearLayout.LayoutParams(-1, dp(48));
+        closeParams.topMargin = dp(12);
+        controlPanel.addView(close, closeParams);
+
+        controlPanel.setAlpha(0f);
+        controlPanel.setTranslationX(dp(35));
+        controlPanel.animate()
+            .alpha(1f)
+            .translationX(0)
+            .setDuration(180)
+            .start();
+
+        wifiStatus.setText("Wi-Fi  ▾");
+        heading.requestFocus();
+    }
+
+    private void addControl(String symbol, String title,
+                            String description, String action) {
+
+        LinearLayout row = new LinearLayout(this);
+        row.setGravity(Gravity.CENTER_VERTICAL);
+        row.setFocusable(true);
+        row.setPadding(dp(12), dp(5), dp(10), dp(5));
+        row.setBackground(glass(0x332E394D,
+            0x447A8AA6, 16));
+
+        TextView icon = text(symbol, 21, 0xFFB9CFFF);
+        icon.setGravity(Gravity.CENTER);
+        row.addView(icon,
+            new LinearLayout.LayoutParams(dp(38), dp(42)));
+
+        LinearLayout labels = new LinearLayout(this);
+        labels.setOrientation(LinearLayout.VERTICAL);
+        labels.setPadding(dp(9), 0, 0, 0);
+
+        labels.addView(text(title, 14, Color.WHITE));
+        labels.addView(text(description, 10, 0xFF9BA8C0));
+
+        row.addView(labels,
+            new LinearLayout.LayoutParams(0, -2, 1));
+
+        LinearLayout.LayoutParams rowParams =
+            new LinearLayout.LayoutParams(-1, dp(57));
+        rowParams.topMargin = dp(7);
+        controlPanel.addView(row, rowParams);
+
+        addFocus(row);
+
+        row.setOnClickListener(v -> {
+            closePanel();
+            openSettings(action);
+        });
+    }
+
+    private void addFileControl() {
+
+        LinearLayout row = new LinearLayout(this);
+        row.setGravity(Gravity.CENTER_VERTICAL);
+        row.setFocusable(true);
+        row.setPadding(dp(12), dp(5), dp(10), dp(5));
+        row.setBackground(glass(0x332E394D,
+            0x447A8AA6, 16));
+
+        TextView icon = text("▰", 21, 0xFFB9CFFF);
+        row.addView(icon,
+            new LinearLayout.LayoutParams(dp(38), dp(42)));
+
+        LinearLayout labels = new LinearLayout(this);
+        labels.setOrientation(LinearLayout.VERTICAL);
+        labels.setPadding(dp(9), 0, 0, 0);
+        labels.addView(text("USB / Files", 14, Color.WHITE));
+        labels.addView(text("Browse storage", 10, 0xFF9BA8C0));
+
+        row.addView(labels,
+            new LinearLayout.LayoutParams(0, -2, 1));
+
+        LinearLayout.LayoutParams params =
+            new LinearLayout.LayoutParams(-1, dp(57));
+        params.topMargin = dp(7);
+        controlPanel.addView(row, params);
+
+        addFocus(row);
+
+        row.setOnClickListener(v -> {
+            closePanel();
+            try {
+                Intent intent = new Intent(Intent.ACTION_OPEN_DOCUMENT);
+                intent.setType("*/*");
+                intent.addCategory(Intent.CATEGORY_OPENABLE);
+                startActivity(intent);
+            } catch (Exception e) {
+                openSettings(Settings.ACTION_SETTINGS);
+            }
+        });
+    }
+
+    private void openSettings(String action) {
+        try {
+            Intent intent = new Intent(action);
+            intent.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK);
+
+            if (intent.resolveActivity(getPackageManager()) != null) {
+                startActivity(intent);
+            } else {
+                startActivity(new Intent(Settings.ACTION_SETTINGS));
+            }
+        } catch (Exception e) {
+            try {
+                startActivity(new Intent(Settings.ACTION_SETTINGS));
+            } catch (Exception ignored) {}
+        }
+    }
+
+    private void closePanel() {
+        if (!panelOpen || controlPanel == null) return;
+
+        panelOpen = false;
+        controlPanel.animate()
+            .alpha(0f)
+            .translationX(dp(35))
+            .setDuration(140)
+            .withEndAction(() -> {
+                root.removeView(controlPanel);
+                controlPanel = null;
+                if (dock.getChildCount() > 0)
+                    dock.getChildAt(0).requestFocus();
+            })
+            .start();
+    }
+
+    // LIVE STATUS
+
+    private void updateStatus() {
+
+        try {
+            WifiManager wifi = (WifiManager)
+                getApplicationContext().getSystemService(
+                    Context.WIFI_SERVICE);
+
+            boolean connected = wifi != null &&
+                wifi.getConnectionInfo() != null &&
+                wifi.getConnectionInfo().getNetworkId() != -1;
+
+            wifiStatus.setText(connected ? "Wi-Fi ●" : "Wi-Fi ○");
+
+        } catch (Exception e) {
+            wifiStatus.setText("Wi-Fi");
+        }
+
+        try {
+            BluetoothAdapter adapter =
+                BluetoothAdapter.getDefaultAdapter();
+
+            bluetoothStatus.setText(
+                adapter != null && adapter.isEnabled()
+                ? "  Bluetooth ●"
+                : "  Bluetooth ○");
+
+        } catch (Exception e) {
+            bluetoothStatus.setText("  Bluetooth");
+        }
+
+        handler.postDelayed(this::updateStatus, 10000);
+    }
+
+    private void updateClock() {
+        if (clock != null) {
+            clock.setText(new SimpleDateFormat(
+                "hh:mm a   •   EEE, dd MMM",
+                Locale.getDefault()).format(new Date()));
+        }
+
+        handler.postDelayed(this::updateClock, 60000);
+    }
+
+    @Override
+    public boolean onKeyDown(int keyCode, KeyEvent event) {
+
+        if (keyCode == KeyEvent.KEYCODE_MENU) {
+            togglePanel();
+            return true;
+        }
+
+        if (keyCode == KeyEvent.KEYCODE_BACK && panelOpen) {
+            closePanel();
+            return true;
+        }
+
+        return super.onKeyDown(keyCode, event);
     }
 
     @Override
     protected void onResume() {
         super.onResume();
-
-        if (dock != null) {
-            loadApps();
-        }
-    }
-
-    @Override
-    public boolean onKeyDown(int keyCode, KeyEvent event) {
-        if (keyCode == KeyEvent.KEYCODE_HOME) {
-            return true;
-        }
-        return super.onKeyDown(keyCode, event);
+        if (dock != null) loadApps();
     }
 
     @Override
     protected void onDestroy() {
         handler.removeCallbacksAndMessages(null);
         super.onDestroy();
+    }
+
+    // LIGHTWEIGHT PARALLAX WALLPAPER
+
+    private class WallpaperView extends View {
+
+        private final Paint paint = new Paint(Paint.ANTI_ALIAS_FLAG);
+        private float position = 0f;
+
+        WallpaperView(Context context) {
+            super(context);
+        }
+
+        void setPosition(int index) {
+            position = Math.min(index, 12) / 12f;
+            invalidate();
+        }
+
+        @Override
+        protected void onDraw(Canvas canvas) {
+            super.onDraw(canvas);
+
+            int w = getWidth();
+            int h = getHeight();
+
+            paint.setShader(new LinearGradient(
+                0, 0, w, h,
+                new int[]{
+                    Color.rgb(8, 12, 25),
+                    Color.rgb(17, 22, 42),
+                    Color.rgb(9, 12, 24)
+                },
+                null,
+                Shader.TileMode.CLAMP
+            ));
+
+            canvas.drawRect(0, 0, w, h, paint);
+            paint.setShader(null);
+
+            float shift = position * dp(90);
+
+            paint.setShader(new RadialGradient(
+                w * 0.35f - shift, h * 0.42f,
+                w * 0.68f,
+                new int[]{0x554D68B8, 0x223C5799, 0x003C5799},
+                null, Shader.TileMode.CLAMP
+            ));
+
+            canvas.drawRect(0, 0, w, h, paint);
+            paint.setShader(null);
+
+            paint.setShader(new RadialGradient(
+                w * 0.82f - shift * 0.45f, h * 0.8f,
+                w * 0.55f,
+                new int[]{0x333F70A5, 0x113F70A5, 0x003F70A5},
+                null, Shader.TileMode.CLAMP
+            ));
+
+            canvas.drawRect(0, 0, w, h, paint);
+            paint.setShader(null);
+        }
     }
 }
